@@ -126,6 +126,12 @@ import {
   CommitActionHeaderButton,
   CommitActionMenuItem,
 } from "./commit-action-button";
+import {
+  createSandbox,
+  getSandboxCreateErrorDetails,
+  type SandboxCreateErrorDetails,
+} from "./sandbox-create";
+import { SandboxCreateErrorBanner } from "./sandbox-create-error-banner";
 import "streamdown/styles.css";
 
 const DiffViewer = dynamic(
@@ -244,40 +250,6 @@ function getReasoningGroupText(parts: ReasoningMessagePart[]): string {
     .map((part) => part.text)
     .filter((text) => text.trim().length > 0)
     .join("\n\n");
-}
-
-type CreateSandboxResponse = SandboxInfo & {
-  type: string;
-};
-
-async function createSandbox(
-  cloneUrl: string | undefined,
-  branch: string | undefined,
-  isNewBranch: boolean,
-  sessionId: string,
-  sandboxType?: string,
-): Promise<CreateSandboxResponse> {
-  const response = await fetch("/api/sandbox", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      repoUrl: cloneUrl,
-      branch: cloneUrl ? (branch ?? "main") : undefined,
-      isNewBranch: cloneUrl ? isNewBranch : false,
-      sessionId,
-      sandboxType: sandboxType ?? "vercel",
-    }),
-  });
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(
-      `Failed to create sandbox: ${response.status}${text ? ` - ${text}` : ""}`,
-    );
-  }
-  const data = (await response.json()) as {
-    mode: string;
-  } & SandboxInfo;
-  return { ...data, type: data.mode };
 }
 
 function isSandboxValid(sandboxInfo: SandboxInfo | null): boolean {
@@ -1472,6 +1444,8 @@ export function SessionChatContent({
   });
 
   const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [sandboxCreateError, setSandboxCreateError] =
+    useState<SandboxCreateErrorDetails | null>(null);
   const [deleteMessageError, setDeleteMessageError] = useState<string | null>(
     null,
   );
@@ -1757,6 +1731,8 @@ export function SessionChatContent({
 
   const handleCreateNewSandbox = useCallback(async () => {
     setIsCreatingSandbox(true);
+    setSandboxCreateError(null);
+
     try {
       const branchExistsOnOrigin = session.prNumber != null;
       const shouldCreateNewBranch =
@@ -1770,8 +1746,11 @@ export function SessionChatContent({
       );
       setSandboxInfo(newSandbox);
       setSandboxTypeFromUnknown(newSandbox.type);
+      setSandboxCreateError(null);
       void requestStatusSync("force");
     } catch (err) {
+      const details = getSandboxCreateErrorDetails(err);
+      setSandboxCreateError(details);
       console.error("Failed to create sandbox:", err);
     } finally {
       setIsCreatingSandbox(false);
@@ -1983,8 +1962,11 @@ export function SessionChatContent({
     if (isCreatingSandbox) {
       return false;
     }
+
     try {
       setIsCreatingSandbox(true);
+      setSandboxCreateError(null);
+
       const branchExistsOnOrigin = session.prNumber != null;
       const shouldCreateNewBranch =
         session.isNewBranch && !branchExistsOnOrigin;
@@ -1997,9 +1979,12 @@ export function SessionChatContent({
       );
       setSandboxInfo(newSandbox);
       setSandboxTypeFromUnknown(newSandbox.type);
+      setSandboxCreateError(null);
       void requestStatusSync("force");
       return true;
     } catch (err) {
+      const details = getSandboxCreateErrorDetails(err);
+      setSandboxCreateError(details);
       console.error("Failed to create sandbox:", err);
       return false;
     } finally {
@@ -3107,6 +3092,12 @@ export function SessionChatContent({
       {/* Input */}
       <div className="p-4 pb-2 sm:pb-8">
         <div className="mx-auto max-w-4xl space-y-2">
+          {sandboxCreateError && (
+            <SandboxCreateErrorBanner
+              error={sandboxCreateError}
+              onDismiss={() => setSandboxCreateError(null)}
+            />
+          )}
           {restoreError && (
             <div className="flex items-center justify-between rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
               <span>{restoreError}</span>
